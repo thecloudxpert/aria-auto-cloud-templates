@@ -1,0 +1,162 @@
+formatVersion: 1
+name: Two Tier Linux Application - Type 3
+description: Two tier Linux application on routed NSX networks with Load Balancer. Automated naming based on role.
+version: 1
+inputs:
+  # Tier 1 Inputs
+  tier1_ServerRole:
+    title: Server Role
+    type: string
+    oneOf:
+      - title: Web Server
+        const: web
+      - title: Database Server
+        const: sql
+      - title: Application Server
+        const: app
+  tier1_flavor:
+    title: Server Size
+    type: string
+    enum:
+      - small
+      - medium
+      - large
+  tier1_image:
+    title: Operating System
+    type: string
+    enum:
+      - Ubuntu20
+      - Ubuntu18
+  tier1_count:
+    title: number of servers in this tier
+    type: number
+    minimum: 1
+    maximum: 2
+    default: 1
+  # Tier 2 Inputs
+  tier2_ServerRole:
+    title: Server Role
+    type: string
+    oneOf:
+      - title: Web Server
+        const: web
+      - title: Database Server
+        const: sql
+      - title: Application Server
+        const: app
+  tier2_flavor:
+    title: Server Size
+    type: string
+    enum:
+      - small
+      - medium
+      - large
+  tier2_image:
+    title: Operating System
+    type: string
+    enum:
+      - Ubuntu20
+      - Ubuntu18
+  tier2_count:
+    title: number of servers in this tier
+    type: number
+    minimum: 1
+    maximum: 2
+    default: 1
+  # Global Inputs
+  projectCode:
+    title: Project Code
+    type: string
+  installAgent:
+    title: Install Telegraf Monitoring
+    type: boolean
+    default: false
+  agentRunAsUsername:
+    title: Telegraf Run User Account
+    type: string
+    default: holuser
+  agentRunAsPassword:
+    title: Telegraf Run User Password
+    type: string
+    encrypted: true
+    default: '${secret.password}'
+resources:
+  tier1_loadbalancer:
+    type: Cloud.NSX.LoadBalancer
+    properties:
+      routes:
+        - port: '80'
+          protocol: HTTP
+      network: '${resource.network.id}'
+      instances: '${resource.tier1_linux[*].id}'
+  tier1_linux:
+    type: Cloud.vSphere.Machine
+    properties:
+      name: '${input.tier1_ServerRole}'
+      role: '${input.tier1_ServerRole}'
+      image: '${input.tier1_image}'
+      flavor: '${input.tier1_flavor}'
+      count: '${input.tier1_count}'
+      folderName: 'Workloads/${env.projectName}'
+      agentRunAsUsername: '${to_string(input.installAgent) == "true" ? input.agentRunAsUsername :""}'
+      agentRunAsPassword: '${to_string(input.installAgent) == "true" ? input.agentRunAsPassword :""}'
+      agent: '${to_string(input.installAgent) == "true" ? "telegraf": ""}'
+      snapshotLimit: 1
+      tags:
+        - key: projectCode
+          value: '${input.projectCode}'
+        - key: vraProjectName
+          value: '${env.projectName}'
+      constraints:
+        - tag: 'cloud:vsphere'
+      networks:
+        - network: '${resource.network.id}'
+          assignment: static
+      cloudConfig: |
+        #cloud-config
+        runcmd:
+          - sudo systemctl stop nginx
+          - sudo systemctl disable nginx
+          - sudo sed -e "/Require local/a \\\t\\tRequire ip 192.168.110.72" -i /etc/apache2/mods-enabled/status.conf
+          - sudo systemctl restart apache2
+          - wget --no-check-certificate http://vr-loginsight.corp.local/api/v1/agent/packages/types/deb -O /tmp/li-agent.deb
+          - sudo LIAGENT_SSL=no SERVERHOST=vr-loginsight.corp.local LIAGENT_AUTOUPDATE=yes dpkg -i /tmp/li-agent.deb
+  tier2_linux:
+    type: Cloud.vSphere.Machine
+    properties:
+      name: '${input.tier2_ServerRole}'
+      role: '${input.tier2_ServerRole}'
+      image: '${input.tier2_image}'
+      flavor: '${input.tier2_flavor}'
+      count: '${input.tier2_count}'
+      folderName: 'Workloads/${env.projectName}'
+      agentRunAsUsername: '${to_string(input.installAgent) == "true" ? input.agentRunAsUsername :""}'
+      agentRunAsPassword: '${to_string(input.installAgent) == "true" ? input.agentRunAsPassword :""}'
+      agent: '${to_string(input.installAgent) == "true" ? "telegraf": ""}'
+      snapshotLimit: 1
+      tags:
+        - key: projectCode
+          value: '${input.projectCode}'
+        - key: vraProjectName
+          value: '${env.projectName}'
+      constraints:
+        - tag: 'cloud:vsphere'
+      networks:
+        - network: '${resource.network.id}'
+          assignment: static
+      cloudConfig: |
+        #cloud-config
+        runcmd:
+          - sudo systemctl stop nginx
+          - sudo systemctl disable nginx
+          - sudo sed -e "/Require local/a \\\t\\tRequire ip 192.168.110.72" -i /etc/apache2/mods-enabled/status.conf
+          - sudo systemctl restart apache2
+          - wget --no-check-certificate http://vr-loginsight.corp.local/api/v1/agent/packages/types/deb -O /tmp/li-agent.deb
+          - sudo LIAGENT_SSL=no SERVERHOST=vr-loginsight.corp.local LIAGENT_AUTOUPDATE=yes dpkg -i /tmp/li-agent.deb
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: routed
+      constraints:
+        - tag: 'net:nsxt'
+        - tag: 'env:dev'

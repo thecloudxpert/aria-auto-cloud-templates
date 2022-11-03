@@ -1,0 +1,214 @@
+name: Distributed System
+version: 3
+formatVersion: 1
+inputs:
+  tier1_flavor:
+    title: Server Size
+    type: string
+    enum:
+      - small
+      - medium
+      - large
+    default: medium
+  tier1_image:
+    title: Tier-1 Operating System
+    type: string
+    enum:
+      - Ubuntu20
+      - Ubuntu18
+    default: Ubuntu18
+  tier1_ServerRole:
+    title: Tier 1 Server Role
+    type: string
+    oneOf:
+      - title: Web Server
+        const: web
+      - title: Database Server
+        const: sql
+      - title: Application Server
+        const: app
+    default: web
+  tier1_count:
+    title: number of servers in Tier-1
+    type: number
+    minimum: 1
+    maximum: 3
+    default: 1
+  tier2_flavor:
+    title: Server Size
+    type: string
+    enum:
+      - small
+      - medium
+      - large
+    default: medium
+  tier2_image:
+    title: Tier-2 Operating System
+    type: string
+    enum:
+      - Ubuntu20
+      - Ubuntu18
+    default: Ubuntu18
+  tier2_ServerRole:
+    title: Tier 2 Server Role
+    type: string
+    oneOf:
+      - title: Web Server
+        const: web
+      - title: Database Server
+        const: sql
+      - title: Application Server
+        const: app
+    default: sql
+  tier2_count:
+    title: number of servers in this Tier-2
+    type: number
+    minimum: 1
+    maximum: 2
+    default: 1
+  enviornment:
+    title: Environment
+    type: string
+    oneOf:
+      - title: Production
+        const: prd
+      - title: Development
+        const: dev
+      - title: Staging
+        const: stg
+    default: prd
+  projectCode:
+    title: Project Code
+    type: string
+resources:
+  Cloud_LoadBalancer_1:
+    type: Cloud.NSX.LoadBalancer
+    properties:
+      name: '${input.enviornment + "-lb"}'
+      routes:
+        - protocol: HTTP
+          port: '80'
+          instanceProtocol: HTTP
+          instancePort: '80'
+      network: '${resource.Cloud_Network_2.name}'
+      instances:
+        - '${resource.tier1_linux.id}'
+      internetFacing: false
+  tier1_linux:
+    type: Cloud.vSphere.Machine
+    dependsOn:
+      - tier2_linux
+    allocatePerInstance: true
+    properties:
+      name: '${input.enviornment + "-" + input.tier1_ServerRole}'
+      role: '${input.tier1_ServerRole}'
+      image: '${input.tier1_image}'
+      flavor: '${input.tier1_flavor}'
+      count: '${input.tier1_count}'
+      cloudConfig: |
+        runcmd:
+          - export ip=$(ip route get 8.8.8.8 | awk -F"src " 'NR==1{split($2,a," ");print a[1]}')
+          - sudo service nginx stop
+          - sudo systemctl disable nginx
+          - systemctl restart apache2
+          - sudo sed -i "s/PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+          - service ssh reload
+          - sudo sed -e "/Require local/a \\\t\\tRequire ip 192.168.110.72" -i /etc/apache2/mods-enabled/status.conf
+          - sudo systemctl restart apache2
+          - wget --no-check-certificate http://vr-loginsight.corp.local/api/v1/agent/packages/types/deb -O /tmp/li-agent.deb
+          - sudo LIAGENT_SSL=no SERVERHOST=vr-loginsight.corp.local LIAGENT_AUTOUPDATE=yes dpkg -i /tmp/li-agent.deb
+          - sudo git -c http.sslVerify=false clone https://gitlab.hol/hol/stc-website /tmp/stc-website
+          - sudo sed -i "s/192.168.110.122/$ip/g" /tmp/stc-website/configBackup/opencart.conf
+          - sudo mv /tmp/stc-website/configBackup/opencart.conf /etc/apache2/sites-enabled/opencart.conf
+          - sudo rm /etc/apache2/sites-enabled/000-default.conf
+          - sudo a2enmod rewrite
+          - sudo mysql --user=root --password=VMware1\! < /tmp/stc-website/configBackup/opencartdb.sql
+          - sudo mysql --user=root --password=VMware1\! --database=opencartdb --execute="GRANT ALL ON opencartdb.* TO 'opencart_user'@'localhost' IDENTIFIED BY 'strong_password';"
+          - sudo sed -i "s/127.0.0.1/$ip/g" /tmp/stc-website/opencart/config.php
+          - sudo cp -TRv /tmp/stc-website/ /var/www/html/
+          - sudo chown www-data:www-data -R /var/www/html/
+          - sudo apache2ctl restart
+          - echo 'Cloud-init is done!' >> /tmp/finished.txt
+      constraints:
+        - tag: 'compute:vsphere'
+      networks:
+        - name: '${resource.Cloud_Network_2.name}'
+          network: '${resource.Cloud_Network_2.id}'
+          assignment: static
+      snapshotLimit: 1
+      tags:
+        - key: projectCode
+          value: '${input.projectCode}'
+        - key: vraProjectName
+          value: '${env.projectName}'
+  tier2_linux:
+    type: Cloud.vSphere.Machine
+    properties:
+      name: '${input.enviornment + "-" + input.tier2_ServerRole}'
+      role: '${input.tier2_ServerRole}'
+      image: '${input.tier2_image}'
+      flavor: '${input.tier2_flavor}'
+      count: '${input.tier2_count}'
+      cloudConfig: |
+        repo_update: true
+        repo_upgrade: all
+        apt_source:
+          - source: deb http://archive.ubuntu.com/ubuntu main universe multiverse restricted
+        packages:
+          - mysql-server-5.7
+          - mysql-client
+          - unzip
+        runcmd:
+          - export ip=$(ip route get 8.8.8.8 | awk -F"src " 'NR==1{split($2,a," ");print a[1]}')
+          - export DEBIAN_FRONTEND=noninteractive
+          - USER=ocuser
+          - PASS=${secret.password}
+          - echo $USER:$PASS | /usr/sbin/chpasswd
+          - echo admin:$PASS | /usr/sbin/chpasswd
+          - sed -i "s/PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+          - service ssh reload
+          - echo "mysql-server-5.7 mysql-server/root_password password root" | sudo debconf-set-selections
+          - echo "mysql-server-5.7 mysql-server/root_password_again password root" | sudo debconf-set-selections
+          - echo "[client]" >> /etc/mysql/mysql.conf.d/mysqld.cnf
+          - echo "user=root" >> /etc/mysql/mysql.conf.d/mysqld.cnf
+          - echo "password=root" >> /etc/mysql/mysql.conf.d/mysqld.cnf
+          - echo "user=$USER" >> /etc/mysql/mysql.conf.d/mysqld.cnf
+          - echo "password=$PASS" >> /etc/mysql/mysql.conf.d/mysqld.cnf         
+          - sed -i 's/bind-address/#bind-address/g' /etc/mysql/mysql.conf.d/mysqld.cnf
+          - systemctl restart mysql
+          - sudo systemctl stop nginx
+          - sudo systemctl disable nginx
+          - mysql -u root -e "GRANT ALL ON *.* TO '$USER'@'%' IDENTIFIED BY '$PASS'"
+          - mysql -u root -e 'CREATE DATABASE opencart'
+          - mysql -u root -e 'USE opencart'
+          - mysql -u root -e 'flush privileges'
+          - sudo sed -e "/Require local/a \\\t\\tRequire ip 192.168.110.72" -i /etc/apache2/mods-enabled/status.conf
+          - sudo systemctl restart apache2
+          - wget --no-check-certificate http://vr-loginsight.corp.local/api/v1/agent/packages/types/deb -O /tmp/li-agent.deb
+          - sudo LIAGENT_SSL=no SERVERHOST=vr-loginsight.corp.local LIAGENT_AUTOUPDATE=yes dpkg -i /tmp/li-agent.deb
+          - sudo git -c http.sslVerify=false clone https://gitlab.hol/hol/stc-website /tmp/stc-website
+          - sudo mysql -u root < /tmp/stc-website/configBackup/opencartdb.sql
+          - sudo mysql -u root -e 'USE opencartdb'
+          - sudo mysql -u root -e 'flush privileges'
+          - sudo systemctl restart mysql
+          - echo 'Cloud-init is done!' >> /tmp/finished.txt
+      constraints:
+        - tag: 'cloud:vsphere'
+      snapshotLimit: 1
+      tags:
+        - key: projectCode
+          value: '${input.projectCode}'
+        - key: vraProjectName
+          value: '${env.projectName}'
+      networks:
+        - name: '${resource.Cloud_Network_2.name}'
+          network: '${resource.Cloud_Network_2.id}'
+          assignment: static
+  Cloud_Network_2:
+    type: Cloud.NSX.Network
+    properties:
+      name: '${input.enviornment + "-routed"}'
+      networkType: routed
+      constraints:
+        - tag: 'net:nsxt'
+        - tag: 'env:prod'

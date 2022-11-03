@@ -1,0 +1,45 @@
+name: Alexa Agnostic Single Machine
+version: 0.0.1
+formatVersion: 1
+inputs:
+  cloud:
+    type: string
+    title: Cloud Endpoint
+    oneOf:
+      - title: aws
+        const: cloud:aws
+      - title: azure
+        const: cloud:azure
+      - title: private
+        const: cloud:vsphere
+      - title: gcp
+        const: cloud:gcp
+  image:
+    type: string
+    title: Image
+    enum:
+      - windows
+      - linux
+  size:
+    type: string
+    title: Size
+    enum:
+      - small
+      - medium
+      - large
+      - xlarge
+      - xsmall
+  prefix:
+    type: string
+    title: Machine Prefix
+    default: alexa
+resources:
+  cloud_machine:
+    type: Cloud.Machine
+    preventDelete: true
+    properties:
+      name: ${input.size}-${input.image}-${input.prefix}
+      image: ${input.image}
+      flavor: ${input.size}
+      constraints:
+        - tag: ${input.cloud}

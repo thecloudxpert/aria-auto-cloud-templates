@@ -1,0 +1,59 @@
+formatVersion: 1
+inputs:
+  vcFqdn:
+    type: string
+    default: vcs02
+  vcPassword:
+    type: string
+    default: VMware1!
+  vcIpAddress:
+    type: string
+    default: 172.16.10.22
+resources:
+  vcsa:
+    type: Cloud.vSphere.Machine
+    properties:
+      imageRef: Images / VMware-vCenter-Server-Appliance-7.0.3.00200-18901211_OVF10
+      cpuCount: 2
+      totalMemoryMB: 10240
+      ovfProperties:
+        - key: DeploymentOption.value
+          value: tiny
+        - key: guestinfo.cis.appliance.net.addr.family
+          value: ipv4
+        - key: guestinfo.cis.appliance.net.mode
+          value: static
+        - key: guestinfo.cis.appliance.net.addr
+          value: ${self.networks[0].address}
+        - key: guestinfo.cis.appliance.net.prefix
+          value: ${resource.vmw_mgmt.netmask}
+        - key: guestinfo.cis.appliance.net.gateway
+          value: ${resource.vmw_mgmt.gateway[0]}
+        - key: guestinfo.cis.appliance.net.dns.servers
+          value: ${resource.vmw_mgmt.dns[0]}
+        - key: guestinfo.cis.appliance.net.pnid
+          value: ${input.vcFqdn}
+        - key: guestinfo.cis.vmdir.password
+          value: ${input.vcPassword}
+        - key: guestinfo.cis.appliance.root.passwd
+          value: ${input.vcPassword}
+        - key: guestinfo.cis.ceip_enabled
+          value: 'True'
+        - key: guestinfo.cis.hadcs.enabled
+          value: 'True'
+        - key: domain
+          value: ${resource.vmw_mgmt.domain}
+        - key: searchpath
+          value: ${resource.vmw_mgmt.dnsSearchDomains[0]}
+      networks:
+        - network: ${resource.vmw_mgmt.id}
+          assignment: static
+          address: ${input.vcIpAddress}
+      constraints:
+        - tag: cloud:vsphere
+  vmw_mgmt:
+    type: Cloud.vSphere.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: Network:VLAN10
