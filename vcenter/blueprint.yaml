@@ -1,3 +1,5 @@
+name: VMware vCenter Deployment (DO NOT USE)
+version: 1.0
 formatVersion: 1
 inputs:
   vcFqdn:
