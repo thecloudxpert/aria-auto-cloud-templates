@@ -1,0 +1,24 @@
+name: Sky Demo
+version: 1.0
+formatVersion: 1
+inputs:
+  osTemplate:
+    type: string
+    title: OS Image
+    enum:
+      - windows
+      - linux
+  env:
+    type: string
+    oneOf:
+      - title: development
+        const: env:dev
+resources:
+  Cloud_Machine_1:
+    type: Cloud.Machine
+    properties:
+      image: ${input.osTemplate}
+      flavor: small
+      count: 2
+      constraints:
+        - tag: ${input.env}

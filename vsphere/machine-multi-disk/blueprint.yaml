@@ -1,0 +1,105 @@
+name: vSphere Machine with Multiple Disks (on-demand)
+version: 1.0
+formatVersion: 1
+inputs:
+  hostname:
+    title: Machine name
+    type: string
+    maxLength: 15
+    minLength: 15
+    description: |
+      Hostname of the workload.  Must be 15 characters.
+  size:
+    title: Machine Size
+    type: string
+    enum:
+      - small
+      - medium
+      - large
+    description: |
+      <ul>
+        <li><b>Small</b> - 1 vCPU, 2GB RAM, 50GB HDD</li>
+        <li><b>Medium</b> - 2 vCPU, 4GB RAM, 50GB HDD</li>
+        <li><b>Large</b> - 4 vCPU, 8GB RAM, 50GB HDD</li>
+      </ul>
+  image:
+    title: Operating System
+    type: string
+    enum:
+      - Windows Server 2019 - ASH
+      - Windows Server 2016
+    description: |
+      <ul>
+        <li><b>Windows Server 2019</b> - Corporate Standard Image</li>
+        <li><b>Windows Server 2016</b> - Corporate Standard Image</li>
+      </ul>
+  DC:
+    type: string
+    title: Location
+    enum:
+      - EMEA
+      - APJ
+      - AMER
+  stateFile:
+    type: string
+    title: Apply Configuration
+    enum:
+      - /windows/base.sls
+  diskDetails:
+    type: array
+    title: Add Additional Disks
+    maxItems: 5
+    items:
+      type: object
+      properties:
+        controller:
+          type: string
+          title: SCSI Controller
+          enum:
+            - SCSI_Controller_0
+            - SCSI_Controller_1
+            - SCSI_Controller_2
+            - SCSI_Controller_3
+          default: SCSI_Controller_0
+        unit:
+          type: integer
+          title: Disk Order
+          maximum: 4
+          minimum: 1
+        size:
+          type: number
+          title: Size GB
+          default: 5
+          maximum: 200
+        mountpoint:
+          type: string
+          title: Mountpoint/Drive Letter
+        label:
+          type: string
+          title: Disk Label
+    minItems: 1
+resources:
+  Cloud_vSphere_Machine_1:
+    type: Cloud.vSphere.Machine
+    properties:
+      image: '${input.image}'
+      flavor: '${input.size}'
+      saltConfiguration:
+        masterId: salt_enterprise_installer
+        minionId: '${input.hostname}'
+        saltEnvironment: sse
+        stateFiles:
+          - ${input.stateFile}
+      constraints:
+        - tag: '${input.DC}'
+      attachedDisks: '${map_to_object(resource.additional_disks[*].id, "source")}'
+  additional_disks:
+    type: Cloud.vSphere.Disk
+    allocatePerInstance: true
+    dependsOnPreviousInstances: true
+    properties:
+      count: '${length(input.diskDetails)}'
+      capacityGb: '${input.diskDetails[count.index].size}'
+      name: '${input.diskDetails[count.index].label}'
+      SCSIController: '${input.diskDetails[count.index].controller}'
+      unitNumber: '${input.diskDetails[count.index].unit}'
