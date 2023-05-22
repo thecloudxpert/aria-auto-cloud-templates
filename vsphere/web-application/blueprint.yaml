@@ -43,13 +43,11 @@ resources:
       rules:
         - name: Any-Web-HTTPS-443
           source: Any
-          ports: 443
           service: HTTPS
           direction: inbound
           access: Allow
         - name: Any-Web-HTTP-80
           source: Any
-          ports: 80
           service: HTTP
           direction: inbound
           access: Allow
@@ -61,7 +59,6 @@ resources:
         - name: Any-Web-SSH-22
           source: Any
           protocol: TCP
-          ports: 22
           service: SSH
           direction: inbound
           access: Allow
