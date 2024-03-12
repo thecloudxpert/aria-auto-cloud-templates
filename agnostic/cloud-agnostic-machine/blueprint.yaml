@@ -44,4 +44,3 @@ resources:
     type: Cloud.Network
     properties:
       networkType: existing
-      

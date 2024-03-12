@@ -1,0 +1,117 @@
+formatVersion: 1
+inputs:
+  role:
+    type: string
+    enum:
+      - web
+      - data
+      - app
+  environment:
+    type: string
+    default: prd
+    oneOf:
+      - title: production
+        const: prd
+      - title: development
+        const: dev
+      - title: test
+        const: tst
+  location:
+    type: string
+    default: cloud:vmc
+    oneOf:
+      - title: VMware Cloud
+        const: cloud:vmc
+      - title: Private Cloud
+        const: cloud:vsphere
+  size:
+    type: string
+    default: small
+    enum:
+      - small
+      - medium
+      - large
+  image:
+    type: string
+    default: linux
+    enum:
+      - linux
+      - windows
+  backup:
+    type: boolean
+    default: false
+  backupType:
+    type: string
+    default: full
+    enum:
+      - full
+      - incremental
+      - differential
+  diskInfo:
+    type: array
+    title: Add Additional Disks
+    minItems: 0
+    maxItems: 5
+    items:
+      type: object
+      properties:
+        controller:
+          type: string
+          title: SCSI Controller
+          enum:
+            - SCSI_Controller_0
+            - SCSI_Controller_1
+            - SCSI_Controller_2
+            - SCSI_Controller_3
+          default: SCSI_Controller_0
+        unit:
+          type: integer
+          title: Disk Order
+          maximum: 4
+          minimum: 1
+        size:
+          type: number
+          title: Size GB
+          default: 5
+          maximum: 200
+        drive:
+          type: string
+          title: Mountpoint/Drive Letter
+        label:
+          type: string
+          title: Disk Label
+  vmCount:
+    type: integer
+    title: Number of VMs
+    minimum: 1
+    maximum: 3
+    default: 1
+resources:
+  vm:
+    type: Cloud.vSphere.Machine
+    allocatePerInstance: true
+    properties:
+      count: ${input.vmCount}
+      name: ${input.environment}-${input.role}
+      image: ${input.image}
+      flavor: ${input.size}
+      constraints:
+        - tag: ${input.location}
+      tags:
+        - key: backup
+          value: ${input.backup}
+        - key: backuptype
+          value: ${input.backup == true ? input.backupType :"none"}
+      attachedDisks: ${map_to_object(slice(resource.disk[*].id, length(input.diskInfo) * count.index, length(input.diskInfo) * (count.index +1)), "source")}
+  disk:
+    type: Cloud.vSphere.Disk
+    allocatePerInstance: true
+    properties:
+      persistent: false
+      count: ${input.vmCount * length(input.diskInfo)}
+      capacityGb: ${input.diskInfo[count.index % length(input.diskInfo)].size}
+      name: ${input.diskInfo[count.index % length(input.diskInfo)].label}
+      SCSIController: ${input.diskInfo[count.index % length(input.diskInfo)].controller}
+      unitNumber: ${to_string(input.diskInfo[count.index % length(input.diskInfo)].unit)}
+      drive: ${to_string(input.diskInfo[count.index % length(input.diskInfo)].drive)}
+      label: ${to_string(input.diskInfo[count.index % length(input.diskInfo)].label)}

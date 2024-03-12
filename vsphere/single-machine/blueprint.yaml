@@ -1,0 +1,51 @@
+name: Single Machine
+version: 1.0.0
+formatVersion: 1
+inputs:
+  role:
+    type: string
+    enum:
+      - web
+      - data
+      - app
+  environment:
+    type: string
+    default: prd
+    oneOf:
+      - title: production
+        const: prd
+      - title: development
+        const: dev
+      - title: test
+        const: tst
+  location:
+    type: string
+    default: cloud:vmc
+    oneOf:
+      - title: VMware Cloud
+        const: cloud:vmc
+      - title: Private Cloud
+        const: cloud:vsphere
+  size:
+    type: string
+    default: small
+    enum:
+      - small
+      - medium
+      - large
+  image:
+    type: string
+    default: linux
+    enum:
+      - linux
+      - windows
+resources:
+  vm:
+    type: Cloud.vSphere.Machine
+    properties:
+      count: ${input.vmCount}
+      name: ${input.environment}-${input.role}
+      image: ${input.image}
+      flavor: ${input.size}
+      constraints:
+        - tag: ${input.location}
