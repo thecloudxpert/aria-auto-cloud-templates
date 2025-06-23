@@ -1,0 +1,173 @@
+formatVersion: 1
+inputs:
+  size:
+    type: string
+    title: Virtual Machine Size
+    enum:
+      - small
+      - medium
+      - large
+    default: small
+    description: |
+      <strong>VM Size Information:</strong>
+      <ul>
+        <li> small = 1vCPU, 1GB </li>
+        <li> medium = 2vCPU, 4GB </li>
+        <li> large = 4vCPU, 8GB </li>
+      </ul>
+  image:
+    type: string
+    title: Operating System
+    enum:
+      - windows-server-2019
+      - windows-server-2022
+    default: windows-server-2019
+  username:
+    type: string
+    default: vmware
+  password:
+    type: string
+    default: VMw@re1!
+    encrypted: true
+  passwordExpiry:
+    type: boolean
+    title: Allow Password Expiry?
+    default: false
+  passwordChange:
+    type: boolean
+    title: Change Password On Logon?
+    default: false
+  naming:
+    type: object
+    title: Server Information
+    $ref: /ref/property-groups/naming
+resources:
+  machine:
+    type: Cloud.vSphere.Machine
+    properties:
+      image: ${input.image}
+      flavor: ${input.size}
+      name: ${input.naming.location}${input.naming.environment}${input.naming.role}
+      constraints:
+        - tag: ${"env:" + input.naming.environment}
+      networks:
+        - network: ${resource.network.id}
+          assignment: static
+          assignIPv6Address: false
+      remoteAccess:
+        authentication: usernamePassword
+        username: ${input.username}
+        password: ${input.password}
+      cloudConfig: |
+        set_hostname: ${self.resourceName}
+
+        #ps1_sysnative
+
+        function CustomLog([string]$LogMessage) {
+          $LogFilePath = "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\log\boostrap.txt"
+          Write-Output "$((Get-Date).ToString('T')) INFO: $LogMessage" | Out-File -FilePath $LogFilePath -Append
+        }
+
+        function DomainDnsTest {
+          $DomainDnsTestResult = (Test-NetConnection -ComputerName "${propgroup.defaultServerValues.domainServer}" -Port 389).TcpTestSucceeded
+          return $DomainDnsTestResult
+        }
+
+        function DomainJoinStatus {
+          $DomainJoinStatusResult = (Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain
+          return $DomainJoinStatusResult
+        }
+
+        function WaitForNetwork {
+          CustomLog("-- Starting WaitForNetwork. Starting status $((Get-NetAdapter -Name Ethernet0).Status)")
+          While ((Get-NetAdapter -Name Ethernet0).Status -ne "Up") {
+            CustomLog("-- Waiting for network Ethernet0 to be up. Current status $((Get-NetAdapter -Name Ethernet0).Status)")
+            Start-Sleep -Seconds 2
+          }
+          CustomLog("-- Ending WaitForNetwork. Ending status $((Get-NetAdapter -Name Ethernet0).Status)")
+        }
+
+        function WaitForDns {
+          CustomLog("-- Starting WaitForDns. Starting status $(DomainDnsTest)")
+          While ((DomainDnsTest) -ne "True") {
+            CustomLog("-- Waiting for DNS to succeed. Current status $(DomainDnsTest)")
+            Start-Sleep -Seconds 2
+          }
+          CustomLog("-- Ending WaitForDns. Ending status $(DomainDnsTest)")
+        }
+
+        function JoinDomain {
+          CustomLog("-- Starting JoinDomain")
+          WaitForNetwork
+          WaitForDns
+          $DomainJoinCreds = New-Object System.Management.Automation.PSCredential "${propgroup.defaultServerValues.adSvcAccount}@${propgroup.defaultServerValues.domain}" ,(ConvertTo-SecureString -String "${secret.adSvcAccountPassword}" -AsPlainText -Force)
+          Add-Computer -DomainName "${propgroup.defaultServerValues.domain}"-Credential $DomainJoinCreds -Server "${propgroup.defaultServerValues.domainServer}" -Restart:$false -Force
+          CustomLog("-- Ending JoinDomain")
+        }
+
+        function WaitForDomainJoin {
+          CustomLog("-- Starting WaitForDomainJoin. Starting status $(DomainJoinStatus)")
+          While ((DomainJoinStatus) -ne "True") {
+            CustomLog("---- Waiting for Domain to be True. Current status $(DomainJoinStatus)")
+            CustomLog("---- Starting Sleep")
+            Start-Sleep -Seconds 10
+            CustomLog("---- Ending Sleep")
+            JoinDomain
+          }
+          CustomLog("-- Ending WaitForDomainJoin. Ending status $(DomainJoinStatus)")
+        }
+
+        CustomLog("Create Local User: ${input.username} - Started")
+        $localPassword = ConvertTo-SecureString ${input.password} -AsPlanText -Force
+        New-LocalUser -Name "${input.username}" -Password $localPassword -PasswordNeverExpires:${'$'+input.passwordExpiry} -MayNotChangePassword:${'$'+input.passwordChange} -AccountNeverExpires:$true
+        Add-LocalGroupMember -Group "Administrators" - Member "${input.username}"
+        CustomLog("Create Local User: ${input.username} - Finished")
+
+        CustomLog("Configure Local Firewall - Started")
+        Set-NetFirewallRule -DisplayName "File and Printer Sharing (Echo Request - ICMPv4-In)" -enabled True
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        CustomLog("Configure Local Firewall - Finished")
+
+        CustomLog("Configure Local Policy for Terminal Services - Started")
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' -Name 'NV Domain' -Value "${propgroup.defaultServerValues.domain}"
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' -Name SyncDomainWithMembership -Value "0"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0
+        CustomLog("Configure Local Policy for Terminal Services - Finished")
+
+        CustomLog("Format RAW Drives - Started")
+        Get-Disk | Where-Object PartitionStyle -eq "RAW" | Initialize-Disk -PassThru | New-Partition -AssignDriveLetter -UseMaximumSize | Format-Volume -NewFileSystemLabel "DATA"
+        CustomLog("Format RAW Drives - Finished")
+
+        CustomLog("Configure DNS - Started")
+        Get-NetAdapter | Set-DnsClient -RegisterThisConnectionsAddress $False
+        Get-NetAdapter | Set-DnsClient -UseSuffixWhenRegistering $False
+        Get-NetAdapter | Set-DnsClient -ConnectionSpecificSuffix ${propgroup.defaultServerValues.domain}
+        Set-DnsClientGlobalSetting -SuffixSearchList @("${propgroup.defaultServerValues.domain}")
+        CustomLog("Configure DNS - Finished")
+
+        CustomLog("Configure Network Adapter - Started")
+        $adapter = Get-NetAdapter | ? { $_.Name -eq "Ethernet0" }
+        $adapter | Remove-NetIpAddress -Confirm:$false
+        $adapter | Remove-NetRoute -Confirm:$false
+        $adapter | New-NetIpAddress -IPAddress ${self.networks[0].address} -PrefixLength ${resource.network.prefixLength} -DefaultGateway ${resource.network.gateway}
+        $adapter | Set-DnsClientServerAddress -ServerAddresses("${join(resource.network.dns,', ')}")
+        $adapter | Disable-NetAdapterBinding -ComponentID ms_tcpip6
+        CustomLog("Configure Network Adapter - Finished")
+
+        CustomLog("Domain Join - Started")
+        $domainJoinCreds = New-Object System.Management.Automation.PSCredential "${propgroup.defaultServerValues.adSvcAccount}@${propgroup.defaultServerValues.domain}" ,(ConvertTo-SecureString -String "${secret.adSvcAccountPassword}" -AsPlainText -Force)
+        Add-Computer -DomainName "${propgroup.defaultServerValues.domain}"-Credential $domainJoinCreds -Server "${propgroup.defaultServerValues.domainServer}" -Restart:$false -Force
+        CustomLog("Domain Join - Started")
+
+        CustomLog("Remove CD-ROM - Started")
+        $drives = Get-WmiObject Win32_Volume -Filter "DriveType=5"
+        $drives | ForEach-Object { (New-Object -ComObject Shell.Application).Namespace(17).ParseName($_.Name).InvokeVerb("Eject") } -ErrorAction SilentlyContinue
+        CustomLog("Remove CD-ROM - Ended")
+
+        shutdown /r /t 10
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${"env:" + input.naming.environment}

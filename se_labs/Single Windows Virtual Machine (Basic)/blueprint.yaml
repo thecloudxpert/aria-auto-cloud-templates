@@ -1,0 +1,82 @@
+formatVersion: 1
+inputs:
+  size:
+    type: string
+    title: Virtual Machine Size
+    enum:
+      - small
+      - medium
+      - large
+    default: small
+    description: |
+      <strong>VM Size Information:</strong>
+      <ul>
+        <li> small = 1vCPU, 1GB </li>
+        <li> medium = 2vCPU, 4GB </li>
+        <li> large = 4vCPU, 8GB </li>
+      </ul>
+  image:
+    type: string
+    title: Operating System
+    enum:
+      - windows-server-2019
+      - windows-server-2022
+    default: windows-server-2019
+  username:
+    type: string
+    default: vmware
+  password:
+    type: string
+    default: VMw@re1!
+    encrypted: true
+  passwordExpiry:
+    type: boolean
+    title: Allow Password Expiry?
+    default: false
+  passwordChange:
+    type: boolean
+    title: Change Password On Logon?
+    default: false
+  naming:
+    type: object
+    title: Server Information
+    $ref: /ref/property-groups/naming
+resources:
+  machine:
+    type: Cloud.vSphere.Machine
+    properties:
+      image: ${input.image}
+      flavor: ${input.size}
+      name: ${input.naming.location}${input.naming.environment}${input.naming.role}
+      constraints:
+        - tag: ${"env:" + input.naming.environment}
+      networks:
+        - network: ${resource.network.id}
+          assignment: static
+          assignIPv6Address: false
+      remoteAccess:
+        authentication: usernamePassword
+        username: ${input.username}
+        password: ${input.password}
+      cloudConfig: |
+        set_hostname: ${self.resourceName}
+
+        #ps1_sysnative
+
+        $localPassword = ConvertTo-SecureString ${input.password} -AsPlanText -Force
+        New-LocalUser -Name "${input.username}" -Password $localPassword -PasswordNeverExpires:${'$'+input.passwordExpiry} -MayNotChangePassword:${'$'+input.passwordChange} -AccountNeverExpires:$true
+        Add-LocalGroupMember -Group "Administrators" - Member "${input.username}"
+
+        $domainJoinCreds = New-Object System.Management.Automation.PSCredential "${propgroup.defaultServerValues.adSvcAccount}@${propgroup.defaultServerValues.domain}" ,(ConvertTo-SecureString -String "${secret.adSvcAccountPassword}" -AsPlainText -Force)
+        Add-Computer -DomainName "${propgroup.defaultServerValues.domain}"-Credential $domainJoinCreds -Server "${propgroup.defaultServerValues.domainServer}" -Restart:$false -Force
+
+        $drives = Get-WmiObject Win32_Volume -Filter "DriveType=5"
+        $drives | ForEach-Object { (New-Object -ComObject Shell.Application).Namespace(17).ParseName($_.Name).InvokeVerb("Eject") } -ErrorAction SilentlyContinue
+
+        shutdown /r /t 10
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${"env:" + input.naming.environment}

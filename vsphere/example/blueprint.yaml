@@ -1,0 +1,67 @@
+formatVersion: 1
+name: Single VM
+description: Single VM, No Networks
+version: 2
+inputs:
+  role:
+    type: string
+    enum:
+      - web
+      - data
+      - app
+  environment:
+    type: string
+    default: prd
+    oneOf:
+      - title: production
+        const: prd
+      - title: development
+        const: dev
+      - title: test
+        const: tst
+  location:
+    type: string
+    default: cloud:vmc
+    oneOf:
+      - title: VMware Cloud
+        const: cloud:vmc
+      - title: Private Cloud
+        const: cloud:vsphere
+  size:
+    type: string
+    description: VM Size
+    default: small
+    enum:
+      - small
+      - medium
+      - large
+  image:
+    type: string
+    default: linux
+    enum:
+      - linux
+      - windows
+  backup:
+    type: boolean
+    default: false
+  backupType:
+    type: string
+    default: full
+    enum:
+      - full
+      - incremental
+      - differential
+resources:
+  vm:
+    type: Cloud.vSphere.Machine
+    properties:
+      name: ${input.environment}-${input.role}
+      image: ${input.image}
+      flavor: ${input.size}
+      constraints:
+        - tag: ${input.location}
+      tags:
+        - key: backup
+          value: ${input.backup}
+        - key: backuptype
+          value: ${input.backup == true ? input.backupType :"none"}

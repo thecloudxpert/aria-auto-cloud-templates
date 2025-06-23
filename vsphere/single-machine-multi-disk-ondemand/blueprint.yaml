@@ -1,10 +1,10 @@
-name: Multiple Virtual Machines - Multiple Disks (OnDemand)
+name: Single Virtual Machines - Multiple Disks (OnDemand)
 version: 1.0.0
 formatVersion: 1
 inputs:
   location:
     type: string
-    default: cloud:vmc
+    default: cloud:vsphere
     oneOf:
       - title: VMware Cloud
         const: cloud:vmc
@@ -19,16 +19,10 @@ inputs:
       - large
   image:
     type: string
-    default: linux
+    default: Ubuntu-18-SSC
     enum:
-      - linux
-      - windows
-  numVms:
-    type: integer
-    title: Number of VMs
-    minimum: 2
-    maximum: 4
-    default: 2
+      - Ubuntu-18-SSC
+      - Windows-16
   diskConfig:
     type: array
     title: Add Additional Disks
@@ -65,22 +59,20 @@ inputs:
 resources:
   vm:
     type: Cloud.vSphere.Machine
-    allocatePerInstance: true
     properties:
-      count: ${input.numVms}
       image: ${input.image}
       flavor: ${input.size}
       constraints:
         - tag: ${input.location}
-      attachedDisks: ${map_to_object(slice(resource.disk[*].id, length(input.diskConfig) * count.index, length(input.diskConfig) * (count.index +1)), "source")}
-  disk:
+      attachedDisks: ${map_to_object(resource.extraDisk[*].id, "source")}
+  extraDisk:
     type: Cloud.vSphere.Disk
     allocatePerInstance: true
     properties:
-      count: ${input.numVms * length(input.diskConfig)}
-      capacityGb: ${input.diskConfig[count.index % length(input.diskConfig)].size}
-      name: ${input.diskConfig[count.index % length(input.diskConfig)].label}
-      SCSIController: ${input.diskConfig[count.index % length(input.diskConfig)].controller}
-      unitNumber: ${to_string(input.diskConfig[count.index % length(input.diskConfig)].unit)}
-      drive: ${to_string(input.diskConfig[count.index % length(input.diskConfig)].drive)}
-      label: ${to_string(input.diskConfig[count.index % length(input.diskConfig)].label)}
+      capacityGb: ${input.diskConfig[count.index].size}
+      name: ${input.diskConfig[count.index].label}
+      SCSIController: ${input.diskConfig[count.index].controller}
+      unitNumber: ${to_string(input.diskConfig[count.index].unit)}
+      drive: ${to_string(input.diskConfig[count.index].drive)}
+      label: ${to_string(input.diskConfig[count.index].label)}
+      count: ${length(input.diskConfig)}

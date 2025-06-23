@@ -1,0 +1,129 @@
+formatVersion: 1
+inputs:
+  hostname:
+    type: string
+    title: Hostname
+    description: The hostname of the virtual machine
+  image:
+    type: string
+    title: Linux Version
+    description: Choose what version of windows
+    oneOf:
+      - title: Ubuntu 22.04 Cloud LTS
+        const: linux-ubuntu-server-22.04
+      - title: Ubuntu 24.04 Cloud LTS
+        const: linux-ubuntu-server-24.04
+      - title: Ubuntu 25.04 Cloud LTS
+        const: linux-ubuntu-server-25.04
+    default: linux-ubuntu-server-25.04
+  size:
+    type: string
+    title: VM Size
+    description: |-
+      <b> Select the size of deployment </b></br>
+      Small: 1 vCPU - 2GB ram - 40GB disk </br>
+      Medium: 2 vCPU - 4GB ram - 40GB disk </br>
+      Large: 4 vCPU - 16GB ram - 40GB disk </br>
+    enum:
+      - small
+      - medium
+      - large
+    default: medium
+  costcenter:
+    type: integer
+    title: Cost Center
+    minLength: 5
+    maxLength: 5
+  backup:
+    type: string
+    title: Backup
+    default: 24h31d
+    oneOf:
+      - title: 12 hours, 31 day retention
+        const: 12h31d
+      - title: 24 hours, 31 day retention
+        const: 24h31d
+      - title: none
+        const: declined
+  ad_group:
+    type: string
+    title: AD Groups
+    description: Provide the Group of people to be permitted login to server in format group@domain.com
+    default: ''
+  superuser_ad_group:
+    type: string
+    title: Superuser AD Groups
+    description: Provide the Group of people to have superuser priviliges in format group@domain.com
+    default: ''
+  naming:
+    type: object
+    title: Server Information
+    $ref: /ref/property-groups/naming
+resources:
+  machine:
+    type: Cloud.vSphere.Machine
+    properties:
+      name: ${input.naming.location}${input.naming.environment}${input.naming.role}
+      image: ${input.image}
+      flavor: ${input.size}
+      constraints:
+        - tag: ${"env:" + input.naming.environment}
+      networks:
+        - network: ${resource.network.id}
+          assignment: static
+          securityGroups: []
+      cloudConfig: |
+        #cloud-config
+        hostname: ${self.resourceName}
+        fqdn: ${resource.machine.resourceName}.${propgroup.defaultServerValues.domain}
+        timezone: ${propgroup.defaultServerValues.timezone}
+        disable_root: true
+        ssh_pwauth: true
+        users:
+          - default
+          - name: root
+            passwd: $6$pCNgiQprrT/EmeE5$zuE5ZtTJfoLXr5BK34SuaH4FSDAIgRykN5xq89lF0VTw8kMErBhPdaDsvHwsLH/3E3K0jIjG7ob17pZXKdhw70
+            lock_passwd: false
+            shell: /bin/bash
+          - name: vmware
+            gecos: vmware
+            lock_passwd: false
+            groups: sudo, users, admin
+            shell: /bin/bash
+            sudo: ALL=(ALL) NOPASSWD:ALL
+            passwd: $6$pCNgiQprrT/EmeE5$zuE5ZtTJfoLXr5BK34SuaH4FSDAIgRykN5xq89lF0VTw8kMErBhPdaDsvHwsLH/3E3K0jIjG7ob17pZXKdhw70
+        package_upgrade: true
+        package_update: true
+        package_reboot_if_required: true
+        packages:
+          - sssd-ad
+          - sssd-tools
+          - realmd
+          - adcli
+        runcmd:
+        - sudo realm -v discover ${propgroup.defaultServerValues.domain}
+        - echo ${secret.adSvcAccountPassword} | sudo realm join -U ${propgroup.defaultServerValues.adSvcAccount} ${propgroup.defaultServerValues.domain}
+        - sudo realm deny --all
+        - sudo realm permit -g ${input.ad_group}
+        - echo '%${input.superuser_ad_group}@${propgroup.defaultServerValues.domain}  ALL=(ALL:ALL) ALL' >> /etc/sudoers
+        - sudo pam-auth-update --enable mkhomedir
+        - wget https://${propgroup.defaultServerValues.loginsight}/api/v1/agent/packages/types/deb --no-check-certificate -O /tmp/liagent-current.deb --quiet
+        - SERVERHOST=${propgroup.defaultServerValues.loginsight} SERVERPROTO=cfapi SERVERPORT=9000 LIAGENT_AUTOUPDATE=yes LIAGENT_SSL=no dpkg -i /tmp/liagent-current.deb > /dev/null 2>&1
+        power_state:
+          delay: now
+          mode: reboot
+          message: Rebooting the OS
+          condition: if [ -e /var/run/reboot-required ]; then exit 0; else exit 1; fi
+      tags:
+        - key: costcenter
+          value: ${input.costcenter}
+        - key: dtap
+          value: ${input.environment}
+        - key: backup
+          value: ${input.backup}
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${"env:" + input.naming.environment}

@@ -1,0 +1,84 @@
+formatVersion: 1
+inputs:
+  size:
+    type: string
+    title: Virtual Machine Size
+    enum:
+      - small
+      - medium
+      - large
+    default: small
+    description: |
+      <strong>VM Size Information:</strong>
+      <ul>
+        <li> small = 1vCPU, 1GB </li>
+        <li> medium = 2vCPU, 4GB </li>
+        <li> large = 4vCPU, 8GB </li>
+      </ul>
+  image:
+    type: string
+    title: Operating System
+    enum:
+      - linux-ubuntu-server-22.04
+      - linux-ubuntu-server-24.04
+      - linux-ubuntu-server-25.04
+    default: linux-ubuntu-server-22.04
+  username:
+    type: string
+    default: vmware
+  password:
+    type: string
+    encrypted: true
+    default: VMw@re1!
+  naming:
+    type: object
+    title: Server Information
+    $ref: /ref/property-groups/naming
+resources:
+  machine:
+    type: Cloud.vSphere.Machine
+    properties:
+      name: ${input.naming.location}${input.naming.environment}${input.naming.role}
+      image: ${input.image}
+      flavor: ${input.size}
+      constraints:
+        - tag: ${"env:" + input.naming.environment}
+      networks:
+        - network: ${resource.network.id}
+          assignment: static
+          assignIPv6Address: false
+      remoteAccess:
+        authentication: usernamePassword
+        username: ${input.username}
+        password: ${input.password}
+      cloudConfig: |
+        #cloud-config
+        hostname: ${self.resourceName}
+        fqdn: ${resource.machine.resourceName}.${propgroup.defaultServerValues.domain}
+        timezone: ${propgroup.defaultServerValues.timezone}
+        disable_root: false
+        ssh_pwauth: true
+        users:
+          - name: ${input.username}
+            lock_passwd: false
+            groups: ['sudo', 'users', 'admin']
+            shell: /bin/bash
+            sudo: ALL=(ALL) NOPASSWD:ALL
+        chpasswd:
+          users:
+            - {name: ${input.username}, password: ${input.password}, type: text}
+            expire: false
+        runcmd:
+          - echo 'Bootstrap - Start' >> /tmp/finished.txt
+
+        power_state:
+          delay: now
+          mode: reboot
+          message: Rebooting the OS
+          condition: if [ -e /var/run/reboot-required ]; then exit 0; else exit 1; fi
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${"env:" + input.naming.environment}

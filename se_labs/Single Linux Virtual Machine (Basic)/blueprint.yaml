@@ -1,0 +1,76 @@
+title: Single Linux Virtual Machines (Basic)
+version: 1.0
+formatVersion: 1
+inputs:
+  size:
+    type: string
+    title: Virtual Machine Size
+    enum:
+      - small
+      - medium
+      - large
+    default: small
+    description: |
+      <strong>VM Size Information:</strong>
+      <ul>
+        <li> small = 1vCPU, 1GB </li>
+        <li> medium = 2vCPU, 4GB </li>
+        <li> large = 4vCPU, 8GB </li>
+      </ul>
+  image:
+    type: string
+    title: Operating System
+    enum:
+      - linux-ubuntu-server-22.04
+      - linux-ubuntu-server-24.04
+      - linux-ubuntu-server-25.04
+    default: linux-ubuntu-server-22.04
+  naming:
+    type: object
+    title: Server Information
+    $ref: /ref/property-groups/naming
+resources:
+  machine:
+    type: Cloud.vSphere.Machine
+    properties:
+      image: ${input.image}
+      flavor: ${input.size}
+      name: ${input.naming.location}${input.naming.environment}${input.naming.role}
+      constraints:
+        - tag: ${"env:" + input.naming.environment}
+      networks:
+        - network: ${resource.network.id}
+          assignment: static
+          assignIPv6Address: false
+      cloudConfig: |
+        #cloud-config
+        hostname: ${self.resourceName}
+        fqdn: ${resource.machine.resourceName}.${propgroup.defaultServerValues.domain}
+        timezone: ${propgroup.defaultServerValues.timezone}
+        disable_root: true
+        ssh_pwauth: true
+        users:
+          - default
+          - name: root
+            passwd: $6$pCNgiQprrT/EmeE5$zuE5ZtTJfoLXr5BK34SuaH4FSDAIgRykN5xq89lF0VTw8kMErBhPdaDsvHwsLH/3E3K0jIjG7ob17pZXKdhw70
+            lock_passwd: false
+            shell: /bin/bash
+          - name: vmware
+            lock_passwd: false
+            groups: ['sudo', 'users', 'admin']
+            shell: /bin/bash
+            sudo: ALL=(ALL) NOPASSWD:ALL
+            passwd: $6$pCNgiQprrT/EmeE5$zuE5ZtTJfoLXr5BK34SuaH4FSDAIgRykN5xq89lF0VTw8kMErBhPdaDsvHwsLH/3E3K0jIjG7ob17pZXKdhw70
+        runcmd:
+          - echo 'cloud-init is done!' >> /tmp/finished.txt
+        power_state:
+          delay: now
+          mode: reboot
+          message: Rebooting the OS
+          condition: if [ -e /var/run/reboot-required ]; then exit 0; else exit 1; fi
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${"env:" + input.naming.environment}

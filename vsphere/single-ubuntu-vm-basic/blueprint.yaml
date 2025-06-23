@@ -1,0 +1,104 @@
+formatVersion: 1
+inputs:
+  size:
+    type: string
+    title: Virtual Machine Size
+    enum:
+      - small
+      - medium
+      - large
+    default: small
+    description: |
+      <strong>VM Size Information:</strong>
+      <ul>
+        <li> small = 1vCPU, 1GB </li>
+        <li> medium = 2vCPU, 4GB </li>
+        <li> large = 4vCPU, 8GB </li>
+      </ul>
+  image:
+    type: string
+    title: Operating System
+    enum:
+      - linux-ubuntu-server-22.04
+      - linux-ubuntu-server-24.04
+      - linux-ubuntu-server-25.04
+    default: linux-ubuntu-server-22.04
+  environment:
+    type: string
+    default: env:production
+    oneOf:
+      - title: Production
+        const: env:production
+      - title: Development
+        const: env:development
+  username:
+    type: string
+    default: admin
+  password:
+    type: string
+    default: VMw@re1!
+    encrypted: true
+resources:
+  machine:
+    type: Cloud.vSphere.Machine
+    properties:
+      remoteAccess:
+        authentication: usernamePassword
+        username: ${input.username}
+        password: ${input.password}
+      image: ${input.image}
+      flavor: ${input.size}
+      constraints:
+        - tag: ${input.environment}
+      cloudConfig: |
+        #cloud-config
+        repo_update: true
+        repo_upgrade: all
+        apt_source:
+          - source: deb http://archive.ubuntu.com/ubuntu main universe multiverse restricted
+        package_update: true
+        package_upgrade: true
+        package_reboot_if_required: true
+
+        hostname: ${resource.machine.resourceName}
+        fqdn: ${resource.machine.resourceName}.${propgroup.defaultServerValues.domain}
+        timezone: ${propgroup.defaultServerValues.timezone}
+
+        users:
+          - name: ${input.username}
+            gecos: ${input.username}
+            sudo: ['ALL=(ALL) NOPASSWD:ALL']
+            shell: /bin/bash
+            groups: users, admin
+            lock_passwd: false
+
+        chpasswd:
+          list: |
+            ${input.username}|${input.password}
+          expire: False
+
+        runcmd:
+        - sed -i "s/PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+        - service ssh reload
+        - sudo apt-get dist-upgrade -y
+        - sudo apt-get autoremove -y
+        - sudo apt-get autoclean -y
+        - sudo userdel -r ubuntu
+        - echo 'cloud-init is done!' >> /tmp/finished.txt
+
+        power_state:
+          delay: now
+          mode: reboot
+          message: Rebooting the OS
+          condition: if [ -e /var/run/reboot-required ]; then exit 0; else exit 1; fi
+          
+      networks:
+        - network: ${resource.network.id}
+          assignment: static
+          assignIPv6Address: false
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${input.environment}

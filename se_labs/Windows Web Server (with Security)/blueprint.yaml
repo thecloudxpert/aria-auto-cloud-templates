@@ -1,0 +1,115 @@
+title: Windows Web Server (with Security)
+version: 1.0
+formatVersion: 1
+inputs:
+  size:
+    type: string
+    title: Virtual Machine Size
+    enum:
+      - small
+      - medium
+      - large
+    default: small
+    description: |
+      <strong>VM Size Information:</strong>
+      <ul>
+        <li> small = 1vCPU, 1GB </li>
+        <li> medium = 2vCPU, 4GB </li>
+        <li> large = 4vCPU, 8GB </li>
+      </ul>
+  image:
+    type: string
+    title: Operating System
+    enum:
+      - windows-server-2019
+      - windows-server-2022
+    default: windows-server-2019
+  naming:
+    type: object
+    title: Server Information
+    $ref: /ref/property-groups/naming
+  securityZone:
+    type: string
+    title: Security Zone
+    default: security:internal
+    oneOf:
+      - title: DMZ
+        const: security:dmz
+      - title: Internal
+        const: security:internal
+resources:
+  webRules:
+    type: Cloud.SecurityGroup
+    properties:
+      securityGroupType: new
+      name: ${input.naming.role}${input.naming.location}${input.naming.environment}
+      rules:
+        - access: Allow
+          protocol: tcp
+          ports: 443
+          name: https-in
+          direction: inbound
+        - access: Allow
+          protocol: tcp
+          ports: 80
+          name: http-in
+          direction: inbound
+  zoneRules:
+    type: Cloud.SecurityGroup
+    properties:
+      constraints:
+        - tag: ${input.securityZone}
+      securityGroupType: existing
+  config:
+    type: Cloud.SaltStack
+    properties:
+      hosts:
+        - ${resource.machine[*].id}
+      masterId: master1
+      additionalMinionParams:
+        master: ${propgroup.TanzuSaltConfiguration.masterAddress}
+        grains:
+          role: ${input.naming.role}
+          location: ${input.naming.location}
+          environment: ${input.naming.environment}
+      stateFiles:
+        - /windows/init.sls
+        - /windows/role/iis_web.sls
+      variables:
+        - zone:${input.securityZone}
+      saltEnvironment: base
+  machine:
+    type: Cloud.vSphere.Machine
+    properties:
+      image: ${input.image}
+      flavor: ${input.size}
+      name: ${input.naming.role}${input.naming.location}${input.naming.environment}
+      constraints:
+        - tag: ${"env:" + input.naming.environment}
+      networks:
+        - network: ${resource.network.id}
+          assignment: static
+          assignIPv6Address: false
+          securityGroups:
+            - ${resource.zoneRules.id}
+            - ${resource.webRules.id}
+      remoteAccess:
+        authentication: usernamePassword
+        username: administrator
+        password: ${secret.localAdminPassword}
+        skipUserCreation: true
+      cloudConfig: |
+        #ps1_sysnative
+        Rename-Computer -NewName ${self.resourceName} -Force -Restart:$false 
+        $localPassword = ConvertTo-SecureString -String ${secret.localAdminPassword} -AsPlainText -Force
+        Set-LocalUser -Name "Administrator" -Password $localPassword
+        New-NetFirewallRule -DisplayName "Salt Minion-Master 4505" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 4505
+        New-NetFirewallRule -DisplayName "Salt Minion-Master 4506" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 4506
+        New-NetFirewallRule -Name "SMB445" -DisplayName "SMB445" -Protocol TCP -LocalPort 445
+        Enable-PSRemoting
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${"env:" + input.naming.environment}

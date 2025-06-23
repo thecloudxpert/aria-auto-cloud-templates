@@ -1,0 +1,138 @@
+name: Single Virtual Machines - Multiple Disks (OnDemand)
+version: 1.0.0
+formatVersion: 1
+inputs:
+  size:
+    type: string
+    title: Virtual Machine Size
+    enum:
+      - small
+      - medium
+      - large
+    default: small
+    description: |
+      <strong>VM Size Information:</strong>
+      <ul>
+        <li> small = 1vCPU, 1GB </li>
+        <li> medium = 2vCPU, 4GB </li>
+        <li> large = 4vCPU, 8GB </li>
+      </ul>
+  image:
+    type: string
+    title: Operating System
+    enum:
+      - linux-ubuntu-server-22.04
+      - linux-ubuntu-server-24.04
+      - linux-ubuntu-server-25.04
+    default: linux-ubuntu-server-22.04
+  diskConfig:
+    type: array
+    title: Add Additional Disks
+    minItems: 0
+    maxItems: 5
+    items:
+      type: object
+      properties:
+        controller:
+          type: string
+          title: SCSI Controller
+          enum:
+            - SCSI_Controller_0
+            - SCSI_Controller_1
+            - SCSI_Controller_2
+            - SCSI_Controller_3
+          default: SCSI_Controller_0
+        unit:
+          type: integer
+          title: Disk Order
+          maximum: 4
+          minimum: 1
+        size:
+          type: number
+          title: Size GB
+          default: 5
+          maximum: 200
+        drive:
+          type: string
+          title: Mountpoint/Drive Letter
+        label:
+          type: string
+          title: Disk Label
+  username:
+    type: string
+    default: admin
+  password:
+    type: string
+    default: VMw@re1!
+    encrypted: true
+  naming:
+    type: object
+    title: Server Information
+    $ref: /ref/property-groups/naming
+resources:
+  machine:
+    type: Cloud.vSphere.Machine
+    properties:
+      image: ${input.image}
+      flavor: ${input.size}
+      name: ${input.naming.location}${input.naming.environment}${input.naming.role}
+      constraints:
+        - tag: ${"env:" + input.naming.environment}
+      attachedDisks: ${map_to_object(resource.disk[*].id, "source")}
+      networks:
+        - network: ${resource.network.id}
+          assignment: static
+          assignIPv6Address: false
+      remoteAccess:
+        authentication: usernamePassword
+        username: ${input.username}
+        password: ${input.password}
+      cloudConfig: |
+        #cloud-config
+        hostname: ${self.resourceName}
+        fqdn: ${resource.machine.resourceName}.${propgroup.defaultServerValues.domain}
+        timezone: ${propgroup.defaultServerValues.timezone}
+
+        users:
+          - name: ${input.username}
+            gecos: ${input.username}
+            sudo: ALL=(ALL) NOPASSWD:ALL
+            shell: /bin/bash
+            groups: users, admin
+            lock_passwd: false
+
+        chpasswd:
+          list: |
+            ${input.username}|${input.password}
+          expire: False
+
+        runcmd:
+        - sudo apt-get dist-upgrade -y
+        - sudo apt-get autoremove -y
+        - sudo apt-get autoclean -y
+
+        - sudo userdel -r ubuntu
+        - echo 'cloud-init is done!' >> /tmp/finished.txt
+
+        power_state:
+          delay: now
+          mode: reboot
+          message: Rebooting the OS
+          condition: if [ -e /var/run/reboot-required ]; then exit 0; else exit 1; fi
+  disk:
+    type: Cloud.vSphere.Disk
+    allocatePerInstance: true
+    properties:
+      capacityGb: ${input.diskConfig[count.index].size}
+      name: ${input.diskConfig[count.index].label}
+      SCSIController: ${input.diskConfig[count.index].controller}
+      unitNumber: ${to_string(input.diskConfig[count.index].unit)}
+      drive: ${to_string(input.diskConfig[count.index].drive)}
+      label: ${to_string(input.diskConfig[count.index].label)}
+      count: ${length(input.diskConfig)}
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${"env:" + input.naming.environment}

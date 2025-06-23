@@ -1,0 +1,80 @@
+formatVersion: 1
+inputs:
+  size:
+    type: string
+    title: Virtual Machine Size
+    enum:
+      - small
+      - medium
+      - large
+    default: small
+    description: |
+      <strong>VM Size Information:</strong>
+      <ul>
+        <li> small = 1vCPU, 1GB </li>
+        <li> medium = 2vCPU, 4GB </li>
+        <li> large = 4vCPU, 8GB </li>
+      </ul>
+  image:
+    type: string
+    title: Operating System
+    enum:
+      - windows-server-2019
+      - windows-server-2022
+    default: windows-server-2019
+  username:
+    type: string
+    default: vmware
+  password:
+    type: string
+    default: VMw@re1!
+    encrypted: true
+  naming:
+    type: object
+    title: Server Information
+    $ref: /ref/property-groups/naming
+resources:
+  Cloud_SaltStack_1:
+    type: Cloud.SaltStack
+    properties:
+      hosts:
+        - ${resource.machine.id}
+      masterId: master1
+      additionalMinionParams:
+        master: ${propgroup.TanzuSaltConfiguration.masterAddress}
+      stateFiles: []
+      saltEnvironment: base
+  machine:
+    type: Cloud.vSphere.Machine
+    properties:
+      image: ${input.image}
+      flavor: ${input.size}
+      name: ${input.naming.location}${input.naming.environment}${input.naming.role}
+      constraints:
+        - tag: ${"env:" + input.naming.environment}
+      networks:
+        - network: ${resource.network.id}
+          assignment: static
+          assignIPv6Address: false
+      remoteAccess:
+        authentication: usernamePassword
+        username: administrator
+        password: ${input.password}
+        skipUserCreation: true
+      cloudConfig: |
+        #ps1_sysnative
+        Rename-Computer -NewName ${self.resourceName} -Force -Restart:$false 
+        $localPassword = ConvertTo-SecureString -String ${input.password} -AsPlainText -Force
+        Set-LocalUser -Name "Administrator" -Password $localPassword
+        #Set-NetFirewallRule -DisplayName "File and Printer Sharing (Echo Request - ICMPv4-In)" -enabled True
+        New-NetFirewallRule -DisplayName "Salt Minion-Master 4505" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 4505
+        New-NetFirewallRule -DisplayName "Salt Minion-Master 4506" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 4506
+        New-NetFirewallRule -Name "SMB445" -DisplayName "SMB445" -Protocol TCP -LocalPort 445
+        Enable-PSRemoting
+        #Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+  network:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${"env:" + input.naming.environment}
